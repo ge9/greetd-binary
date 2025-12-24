@@ -1,0 +1,77 @@
+name: Manual release
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Commit SHA / branch / existing tag to build from"
+        required: true
+      tag:
+        description: "New tag name (leave empty to use existing tag in ref)"
+        required: false
+
+permissions:
+  contents: write   # tag push + release 作成に必要
+
+jobs:
+  build-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+
+      - name: Setup Zig
+        uses: Rul1an/zig-cross-compile-action@v1
+        with:
+          version: 0.13.0
+          target: x86_64-linux-gnu.2.3
+      - name: Setup build deps
+        run: |
+          sudo apt install -y libpam0g-dev
+          cargo install --locked cargo-zigbuild
+      - name: Build
+        run: |
+          RUSTFLAGS='-L /usr/lib/x86_64-linux-gnu' cargo zigbuild --target=x86_64-unknown-linux-gnu.2.16 --release
+# getauxval requires libc 2.16
+      - name: Decide tag name
+        id: vars
+        run: |
+          REF=${{ inputs.ref }}
+          if [ -n "${{ inputs.tag }}" ]; then
+            echo "TAG=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            case $REF in
+                ????????????????????????????????????????) # length=40, maybe commit hash
+                    echo $REF
+                    REF1=commit-${REF%${REF#???????}}
+                    echo $REF1
+                    ;;
+                *)
+                    REF1=$REF
+                    ;;
+            esac
+            echo 
+            echo "TAG=$REF1" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create and push tag
+        run: |
+          git tag "${{ steps.vars.outputs.TAG }}"
+          git push origin "${{ steps.vars.outputs.TAG }}"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.vars.outputs.TAG }}
+          name: Release ${{ steps.vars.outputs.TAG }}
+          draft: false
+          prerelease: false
+          files: |
+            target/x86_64-unknown-linux-gnu/release/greetd
+            target/x86_64-unknown-linux-gnu/release/agreety
+            target/x86_64-unknown-linux-gnu/release/fakegreet
+            
